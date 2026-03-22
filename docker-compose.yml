@@ -1,0 +1,39 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: jira-postgres
+    environment:
+      POSTGRES_DB: jiradb
+      POSTGRES_USER: jira
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jira -d jiradb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "5432:5432"
+    volumes:
+      - jira_postgres_data:/var/lib/postgresql/data
+
+  jira:
+    image: atlassian/jira-software:latest
+    container_name: jira
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ATL_JDBC_URL: jdbc:postgresql://postgres:5432/jiradb
+      ATL_JDBC_USER: jira
+      ATL_JDBC_PASSWORD: ${ATL_JDBC_PASSWORD}
+      ATL_DB_DRIVER: org.postgresql.Driver
+      ATL_DB_TYPE: postgres72
+      ATL_FORCE_CFG_UPDATE: "true"
+    ports:
+      - "8080:8080"
+    volumes:
+      - jira_home:/var/atlassian/application-data/jira
+
+volumes:
+  jira_postgres_data:
+  jira_home:

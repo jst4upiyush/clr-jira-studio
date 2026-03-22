@@ -1,0 +1,121 @@
+{
+  "workflow": "jira-webapp-integration",
+  "status": "blocked",
+  "current_step": "step_6_validate_creation_flows",
+  "completed_steps": [
+    "step_1_create_jira_users",
+    "step_2_create_ear_epic",
+    "step_3_sync_users_with_webapp",
+    "step_4_add_jira_search_from_web",
+    "step_5_add_jira_create_from_web"
+  ],
+  "failed_step": null,
+  "last_updated_utc": "2026-03-22T17:58:05Z",
+  "steps": {
+    "step_1_create_jira_users": {
+      "status": "completed",
+      "evidence": [
+        "GET /rest/api/2/serverInfo -> 200 (Jira Server 11.3.3)",
+        "GET /rest/api/2/mypermissions?projectKey=EAR|ENG|OPS -> 200 with ADMINISTER_PROJECTS=True, PROJECT_ADMIN=True, ADMINISTER=True",
+        "GET /rest/api/2/user/search confirmed existing users clrslate-ear-1, clrslate-ear-2, clrslate-eng-1, clrslate-eng-2, clrslate-ops-1, clrslate-ops-2",
+        "POST project role assignments -> 200 for EAR, ENG, OPS Administrators role",
+        "Final role detail checks confirmed target users present in each project"
+      ],
+      "artifacts": [
+        ".copilot/state/jira-webapp-workflow-state.json",
+        ".copilot/state/jira-webapp-workflow-log.md"
+      ],
+      "notes": "Reused six deterministic Jira users and assigned two each to EAR, ENG, and OPS using the Administrators project role. Mapping: EAR -> clrslate-ear-1, clrslate-ear-2; ENG -> clrslate-eng-1, clrslate-eng-2; OPS -> clrslate-ops-1, clrslate-ops-2."
+    },
+    "step_2_create_ear_epic": {
+      "status": "completed",
+      "evidence": [
+        "GET /rest/api/2/search duplicate check for EAR Epic summary 'Clrslate Workflow Anchor Epic' -> 200 with 0 matches before creation",
+        "POST /rest/api/2/issue initial attempt -> 400 showing Epic Name is required",
+        "GET /rest/api/2/issue/createmeta/EAR/issuetypes/10000?expand=fields identified customfield_10105 as Epic Name",
+        "POST /rest/api/2/issue succeeded and created EAR-1",
+        "GET /rest/api/2/issue/EAR-1 verified project EAR, issue type Epic, labels clrslate-ai-genrated and clrslate-workflow-anchor"
+      ],
+      "artifacts": [
+        ".copilot/state/jira-webapp-workflow-state.json",
+        ".copilot/state/jira-webapp-workflow-log.md"
+      ],
+      "notes": "Created reusable EAR Epic anchor EAR-1 with summary 'Clrslate Workflow Anchor Epic' and labels clrslate-ai-genrated, clrslate-workflow-anchor. Epic Name field required by Jira instance was satisfied via customfield_10105."
+    },
+    "step_3_sync_users_with_webapp": {
+      "status": "completed",
+      "evidence": [
+        "Settings page rendered 3 visible Jira projects, 8 unique Jira users, current session user clrslate-ear-1, and 8 Jira-backed app users in the session store",
+        "Browser-evaluated API results: syncProjectCount=3, syncTotalUniqueUsers=8, appUsersTotal=8, sessionUser=clrslate-ear-1, authMode=jira-sync",
+        "Draft generation verification returned createdByUserId=jira:clrslate-ear-1 for draft draft-1774200954826",
+        "Audit verification confirmed syncUsersForVisibleProjects -> UsersService.replaceFromJiraSync -> AuthController.getSession -> WorkItemsService.resolveCurrentUserId flow"
+      ],
+      "artifacts": [
+        ".copilot/state/jira-webapp-workflow-state.json",
+        ".copilot/state/jira-webapp-workflow-log.md",
+        "apps/api/src/modules/app.module.ts",
+        "apps/api/src/modules/auth/auth.controller.ts",
+        "apps/api/src/modules/auth/auth.module.ts",
+        "apps/api/src/modules/jira/jira.module.ts",
+        "apps/api/src/modules/jira/jira.service.ts",
+        "apps/api/src/modules/users/users.controller.ts",
+        "apps/api/src/modules/users/users.module.ts",
+        "apps/api/src/modules/users/users.service.ts",
+        "apps/api/src/modules/work-items/work-items.module.ts",
+        "apps/api/src/modules/work-items/work-items.service.ts",
+        "apps/web/app/settings/page.tsx",
+        "apps/web/lib/api.ts",
+        "packages/shared/src/index.ts"
+      ],
+      "notes": "Added app-side Jira user provisioning via UsersService, wired Jira sync into the store, replaced stub auth session with jira-sync session resolution, and updated draft provenance to use synced Jira-backed user IDs. Settings page now exposes synced identity and provisioned users in the web app."
+    },
+    "step_4_add_jira_search_from_web": {
+      "status": "completed",
+      "evidence": [
+        "Create page search button remained disabled until a query was entered",
+        "Live search for 'Clrslate Workflow Anchor Epic' in EAR returned 1 issue matched: EAR-1 with issue type Epic and status To Do",
+        "Audit verification confirmed create-page search uses live Jira search via /api/jira/search and Jira REST /rest/api/2/search",
+        "Search failures are sanitized in JiraService.searchIssues() with a user-facing message instead of leaking upstream URL/body details"
+      ],
+      "artifacts": [
+        ".copilot/state/jira-webapp-workflow-state.json",
+        ".copilot/state/jira-webapp-workflow-log.md",
+        "apps/api/src/modules/jira/jira.service.ts"
+      ],
+      "notes": "Verified live Jira-backed search from the web app and tightened search error handling so failed upstream queries surface a clean message to users."
+    },
+    "step_5_add_jira_create_from_web": {
+      "status": "completed",
+      "evidence": [
+        "Create page exposes all six scopes: EPIC_ONLY, EPIC_WITH_FEATURES_AND_STORIES, EPIC_WITH_FEATURES, FEATURE_ONLY, FEATURE_WITH_STORIES, STORY_ONLY",
+        "Invalid STORY_ONLY attempt without parent keys showed hint text and returned clean validation error 'Scope 'STORY_ONLY' requires existingEpicKey.'",
+        "Live EPIC_ONLY submission from the web app succeeded with status SUBMITTED and created Jira issue EAR-2",
+        "Read-only Jira verification for EAR-2 confirmed issue type Epic and required label clrslate-ai-genrated",
+        "Backend fixes in JiraService made hierarchy metadata scope-aware and loaded per-issue-type field metadata required for Epic creation"
+      ],
+      "artifacts": [
+        ".copilot/state/jira-webapp-workflow-state.json",
+        ".copilot/state/jira-webapp-workflow-log.md",
+        "apps/api/src/modules/jira/jira.service.ts",
+        "apps/web/lib/api.ts"
+      ],
+      "notes": "Verified live Jira creation from the web app, fixed scope-aware metadata lookup and per-issue-type field parsing for Epic creation, and improved client error parsing so validation messages surface cleanly in the UI."
+    },
+    "step_6_validate_creation_flows": {
+      "status": "blocked",
+      "evidence": [
+        "Playwright validation passed EPIC_ONLY and created EAR-3 from the live web app",
+        "Read-only Jira verification confirmed labels on EAR-2 and EAR-3 include clrslate-ai-genrated",
+        "EPIC_WITH_FEATURES_AND_STORIES, EPIC_WITH_FEATURES, FEATURE_ONLY, and FEATURE_WITH_STORIES all failed with project capability error messages stating FEATURE is not supported",
+        "STORY_ONLY remained blocked because existingFeatureKey is required and no visible project supports Feature creation",
+        "Live /api/jira/projects response reported supportedLevels [EPIC, STORY] for EAR, ENG, and OPS with no Feature support",
+        "Direct Jira createmeta inspection by validation subagent found no Feature issue type in EAR, ENG, or OPS"
+      ],
+      "artifacts": [
+        ".copilot/state/jira-webapp-workflow-state.json",
+        ".copilot/state/jira-webapp-workflow-log.md"
+      ],
+      "notes": "Blocked by external Jira project configuration. At least one visible project must support the Feature issue type before the remaining flows can be validated end to end. Resume step 6 by rerunning EPIC_WITH_FEATURES_AND_STORIES, EPIC_WITH_FEATURES, FEATURE_ONLY, FEATURE_WITH_STORIES, and STORY_ONLY after Jira admins add Feature support and a valid Feature parent can exist."
+    }
+  }
+}

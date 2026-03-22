@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "outDir": "dist",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "paths": {
+      "@jira-idea-studio/shared": ["../../packages/shared/src"]
+    }
+  },
+  "include": ["src/**/*.ts"]
+}
