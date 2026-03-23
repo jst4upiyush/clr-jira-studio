@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "scripts": {
-    "dev": "nest start --watch",
+    "dev": "node ./scripts/dev-api.mjs",
     "build": "nest build",
     "start": "node dist/apps/api/src/main.js",
     "lint": "echo 'no lint configured'",

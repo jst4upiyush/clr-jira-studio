@@ -1,19 +1,24 @@
 import {
   BadGatewayException,
   BadRequestException,
+  HttpException,
   Injectable,
   InternalServerErrorException,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import type {
   DraftWorkItem,
   DraftWorkItemSet,
+  JiraIntegrationStatus,
+  JiraParentIssueListResponse,
   JiraIssueSearchResponse,
   JiraIssueSearchResult,
   JiraProjectRoleSummary,
   JiraProjectUserSyncSummary,
   JiraRoleUserSummary,
   JiraUserSyncResponse,
+  ParentIssueLevel,
   ProjectRole,
   ProjectSummary,
   SubmissionStatus,
@@ -114,11 +119,32 @@ const GENERATED_LABEL = 'clrslate-ai-genrated';
 
 @Injectable()
 export class JiraService {
-  private readonly baseUrl = this.requireEnv('JIRA_BASE_URL').replace(/\/+$/, '');
-  private readonly personalAccessToken = this.requireEnv('JIRA_PAT');
-  private readonly defaultUser = process.env.JIRA_DEFAULT_USER?.trim() ?? '';
-
   constructor(private readonly usersService: UsersService) {}
+
+  getIntegrationStatus(): JiraIntegrationStatus {
+    const baseUrl = process.env.JIRA_BASE_URL?.trim();
+    const defaultUser = process.env.JIRA_DEFAULT_USER?.trim();
+    const missingVariables = [
+      !baseUrl ? 'JIRA_BASE_URL' : undefined,
+      !process.env.JIRA_PAT?.trim() ? 'JIRA_PAT' : undefined,
+      !defaultUser ? 'JIRA_DEFAULT_USER' : undefined,
+    ].filter((value): value is string => Boolean(value));
+
+    return {
+      configured: missingVariables.length === 0,
+      baseUrl: baseUrl?.replace(/\/+$/, ''),
+      defaultUser,
+      missingVariables,
+      message:
+        missingVariables.length === 0
+          ? 'Jira integration is configured.'
+          : `Jira integration is not configured. Add ${missingVariables.join(', ')} to the root .env file and restart the API.`,
+    };
+  }
+
+  isConfigured() {
+    return this.getIntegrationStatus().configured;
+  }
 
   async listProjectSummaries(): Promise<ProjectSummary[]> {
     const contexts = await this.getVisibleProjectContexts();
@@ -143,6 +169,11 @@ export class JiraService {
   }
 
   async syncUsersForVisibleProjects(): Promise<JiraUserSyncResponse> {
+    if (!this.isConfigured()) {
+      this.usersService.clear();
+      return this.createEmptyUserSyncResponse();
+    }
+
     const contexts = await this.getVisibleProjectContexts();
     const projects: JiraProjectUserSyncSummary[] = [];
     const allUsers = new Set<string>();
@@ -207,41 +238,71 @@ export class JiraService {
     const escapedQuery = normalizedQuery.replace(/"/g, '\\"');
     const jql = `project = ${normalizedProjectKey} AND text ~ "${escapedQuery}" ORDER BY updated DESC`;
     try {
-      const result = await this.fetchJson<{
-        total?: number;
-        issues?: Array<{
-          key: string;
-          fields?: {
-            summary?: string;
-            status?: { name?: string };
-            issuetype?: { name?: string };
-            project?: { key?: string };
-          };
-        }>;
-      }>(`${this.baseUrl}/rest/api/2/search?jql=${encodeURIComponent(jql)}&maxResults=15&fields=summary,status,issuetype,project`);
-
-      const issues: JiraIssueSearchResult[] = (result.issues ?? []).map((issue) => ({
-        key: issue.key,
-        projectKey: issue.fields?.project?.key ?? normalizedProjectKey,
-        summary: issue.fields?.summary ?? issue.key,
-        issueType: issue.fields?.issuetype?.name ?? 'Unknown',
-        status: issue.fields?.status?.name,
-        url: this.getBrowseUrl(issue.key),
-      }));
+      const result = await this.fetchIssueSearchResults(normalizedProjectKey, jql, 15);
 
       return {
         projectKey: normalizedProjectKey,
         query: normalizedQuery,
         jql,
-        total: result.total ?? issues.length,
-        issues,
+        total: result.total,
+        issues: result.issues,
       };
     } catch (error) {
-      if (error instanceof BadRequestException) {
+      if (error instanceof HttpException) {
         throw error;
       }
 
       throw new BadGatewayException('Failed to search Jira issues. Please verify the Jira connection and try again.');
+    }
+  }
+
+  async listParentIssues(
+    projectKey?: string,
+    parentLevel?: ParentIssueLevel,
+    query?: string,
+  ): Promise<JiraParentIssueListResponse> {
+    const normalizedProjectKey = projectKey?.trim();
+    if (!normalizedProjectKey) {
+      throw new BadRequestException('projectKey is required.');
+    }
+
+    const normalizedParentLevel = this.normalizeParentIssueLevel(parentLevel);
+    const project = await this.getProjectSummaryByIdOrKey(normalizedProjectKey);
+    if (!project.supportedLevels.includes(normalizedParentLevel)) {
+      throw new BadRequestException(
+        `Project '${project.jiraProjectKey}' does not support parent level '${normalizedParentLevel}'.`,
+      );
+    }
+
+    const normalizedQuery = query?.trim();
+    const issueTypeName = this.toJiraIssueTypeName(normalizedParentLevel);
+    const clauses = [`project = ${project.jiraProjectKey}`, `issuetype = "${issueTypeName}"`];
+
+    if (normalizedQuery) {
+      clauses.push(`text ~ "${normalizedQuery.replace(/"/g, '\\"')}"`);
+    }
+
+    const jql = `${clauses.join(' AND ')} ORDER BY updated DESC`;
+
+    try {
+      const result = await this.fetchIssueSearchResults(project.jiraProjectKey, jql, 25);
+      return {
+        projectKey: project.jiraProjectKey,
+        parentLevel: normalizedParentLevel,
+        query: normalizedQuery,
+        jql,
+        total: result.total,
+        issues: result.issues.map((issue) => ({
+          ...issue,
+          parentLevel: normalizedParentLevel,
+        })),
+      };
+    } catch (error) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
+      throw new BadGatewayException('Failed to list Jira parent issues. Please verify the Jira connection and try again.');
     }
   }
 
@@ -260,7 +321,7 @@ export class JiraService {
 
   async ensureIssueKeyInProject(issueKey: string, projectKey: string): Promise<JiraIssueReference> {
     const issue = await this.fetchJson<JiraIssueReference>(
-      `${this.baseUrl}/rest/api/2/issue/${encodeURIComponent(issueKey)}?fields=project,summary,issuetype`,
+      `${this.getBaseUrl()}/rest/api/2/issue/${encodeURIComponent(issueKey)}?fields=project,summary,issuetype`,
     );
 
     const actualProjectKey = issue.fields?.project?.key;
@@ -423,14 +484,14 @@ export class JiraService {
       fields[epicNameField] = item.title;
     }
 
-    return this.fetchJson<JiraCreatedIssue>(`${this.baseUrl}/rest/api/2/issue`, {
+    return this.fetchJson<JiraCreatedIssue>(`${this.getBaseUrl()}/rest/api/2/issue`, {
       method: 'POST',
       body: JSON.stringify({ fields }),
     });
   }
 
   private async createIssueLink(inwardIssueKey: string, outwardIssueKey: string, linkTypeName: string) {
-    await this.fetchJson(`${this.baseUrl}/rest/api/2/issueLink`, {
+    await this.fetchJson(`${this.getBaseUrl()}/rest/api/2/issueLink`, {
       method: 'POST',
       body: JSON.stringify({
         type: { name: linkTypeName },
@@ -583,7 +644,7 @@ export class JiraService {
     if (story) {
       metadata.epicLinkFieldKeyByLevel.STORY = this.findFieldKeyByName(story.fields, 'Epic Link');
 
-      const issueLinkTypes = await this.fetchJson<JiraIssueLinkTypeResponse>(`${this.baseUrl}/rest/api/2/issueLinkType`);
+      const issueLinkTypes = await this.fetchJson<JiraIssueLinkTypeResponse>(`${this.getBaseUrl()}/rest/api/2/issueLinkType`);
       const linkType =
         issueLinkTypes.issueLinkTypes?.find((entry) => entry.name?.toLowerCase().includes('relates')) ??
         issueLinkTypes.issueLinkTypes?.[0];
@@ -610,7 +671,7 @@ export class JiraService {
   private async getCreateMetaIssueTypes(projectKey: string, includeFields: boolean): Promise<JiraIssueTypeMeta[]> {
     const query = includeFields ? '?expand=fields' : '';
     const createMeta = await this.fetchJson<JiraCreateMetaResponse>(
-      `${this.baseUrl}/rest/api/2/issue/createmeta/${encodeURIComponent(projectKey)}/issuetypes${query}`,
+      `${this.getBaseUrl()}/rest/api/2/issue/createmeta/${encodeURIComponent(projectKey)}/issuetypes${query}`,
     );
 
     return createMeta.values ?? [];
@@ -618,7 +679,7 @@ export class JiraService {
 
   private async getCreateMetaIssueType(projectKey: string, issueType: JiraIssueTypeMeta): Promise<JiraIssueTypeMeta> {
     const details = await this.fetchJson<JiraCreateMetaFieldResponse>(
-      `${this.baseUrl}/rest/api/2/issue/createmeta/${encodeURIComponent(projectKey)}/issuetypes/${encodeURIComponent(issueType.id)}?expand=fields`,
+      `${this.getBaseUrl()}/rest/api/2/issue/createmeta/${encodeURIComponent(projectKey)}/issuetypes/${encodeURIComponent(issueType.id)}?expand=fields`,
     );
 
     return {
@@ -636,13 +697,13 @@ export class JiraService {
   }
 
   private async getVisibleProjectContexts(): Promise<ProjectContext[]> {
-    const projects = await this.fetchJson<JiraProject[]>(`${this.baseUrl}/rest/api/2/project`);
+    const projects = await this.fetchJson<JiraProject[]>(`${this.getBaseUrl()}/rest/api/2/project`);
 
     return Promise.all(
       projects.map(async (project) => ({
         project,
         roleMap: await this.fetchJson<Record<string, string>>(
-          `${this.baseUrl}/rest/api/2/project/${encodeURIComponent(project.key)}/role`,
+          `${this.getBaseUrl()}/rest/api/2/project/${encodeURIComponent(project.key)}/role`,
         ),
       })),
     );
@@ -686,7 +747,8 @@ export class JiraService {
   }
 
   private matchesDefaultUser(actor: JiraRoleActor): boolean {
-    if (!this.defaultUser) {
+    const defaultUser = this.getDefaultUser();
+    if (!defaultUser) {
       return false;
     }
 
@@ -703,7 +765,7 @@ export class JiraService {
       .filter((value): value is string => Boolean(value))
       .map((value) => value.toLowerCase());
 
-    return candidates.includes(this.defaultUser.toLowerCase());
+    return candidates.includes(defaultUser.toLowerCase());
   }
 
   private toRoleUser(actor: JiraRoleActor): JiraRoleUserSummary | null {
@@ -720,6 +782,47 @@ export class JiraService {
 
   private findIssueType(issueTypes: JiraIssueTypeMeta[], issueTypeName: string): JiraIssueTypeMeta | undefined {
     return issueTypes.find((issueType) => issueType.name.toLowerCase() === issueTypeName.toLowerCase());
+  }
+
+  private normalizeParentIssueLevel(parentLevel?: ParentIssueLevel): ParentIssueLevel {
+    if (!parentLevel) {
+      throw new BadRequestException('parentLevel is required and must be EPIC or FEATURE.');
+    }
+
+    if (parentLevel !== 'EPIC' && parentLevel !== 'FEATURE') {
+      throw new BadRequestException(`Unsupported parentLevel '${parentLevel}'. Use EPIC or FEATURE.`);
+    }
+
+    return parentLevel;
+  }
+
+  private async fetchIssueSearchResults(projectKey: string, jql: string, maxResults: number) {
+    const result = await this.fetchJson<{
+      total?: number;
+      issues?: Array<{
+        key: string;
+        fields?: {
+          summary?: string;
+          status?: { name?: string };
+          issuetype?: { name?: string };
+          project?: { key?: string };
+        };
+      }>;
+    }>(`${this.getBaseUrl()}/rest/api/2/search?jql=${encodeURIComponent(jql)}&maxResults=${maxResults}&fields=summary,status,issuetype,project`);
+
+    const issues: JiraIssueSearchResult[] = (result.issues ?? []).map((issue) => ({
+      key: issue.key,
+      projectKey: issue.fields?.project?.key ?? projectKey,
+      summary: issue.fields?.summary ?? issue.key,
+      issueType: issue.fields?.issuetype?.name ?? 'Unknown',
+      status: issue.fields?.status?.name,
+      url: this.getBrowseUrl(issue.key),
+    }));
+
+    return {
+      total: result.total ?? issues.length,
+      issues,
+    };
   }
 
   private findFieldKeyByName(fields: Record<string, JiraFieldMeta> | undefined, displayName: string): string | undefined {
@@ -778,31 +881,83 @@ export class JiraService {
   }
 
   private getBrowseUrl(issueKey: string) {
-    return `${this.baseUrl}/browse/${issueKey}`;
+    return `${this.getBaseUrl()}/browse/${issueKey}`;
   }
 
-  private requireEnv(name: string): string {
-    const value = process.env[name]?.trim();
-    if (!value) {
-      throw new InternalServerErrorException(`Missing required environment variable '${name}'.`);
+  private getBaseUrl() {
+    return this.getJiraConfig().baseUrl;
+  }
+
+  private getPersonalAccessToken() {
+    return this.getJiraConfig().personalAccessToken;
+  }
+
+  private getDefaultUser() {
+    return process.env.JIRA_DEFAULT_USER?.trim() ?? '';
+  }
+
+  private createEmptyUserSyncResponse(): JiraUserSyncResponse {
+    return {
+      generatedAt: new Date().toISOString(),
+      projectCount: 0,
+      totalUniqueUsers: 0,
+      projects: [],
+    };
+  }
+
+  private getJiraConfig() {
+    const status = this.getIntegrationStatus();
+    const personalAccessToken = process.env.JIRA_PAT?.trim();
+
+    if (!status.configured || !status.baseUrl || !personalAccessToken) {
+      throw new ServiceUnavailableException(status.message);
     }
-    return value;
+
+    return {
+      baseUrl: status.baseUrl,
+      personalAccessToken,
+    };
+  }
+
+  private toJiraRequestException(status: number) {
+    if (status === 401 || status === 403) {
+      return new BadGatewayException(
+        'Jira rejected the request. Verify JIRA_PAT has access to the configured Jira instance and project data.',
+      );
+    }
+
+    if (status === 404) {
+      return new BadGatewayException(
+        'Jira endpoint was not found. Verify JIRA_BASE_URL points to the Jira base URL, for example http://localhost:8080.',
+      );
+    }
+
+    return new BadGatewayException(
+      `Jira request failed with status ${status}. Verify Jira is running and the configured credentials are valid.`,
+    );
   }
 
   private async fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-    const response = await fetch(url, {
-      ...init,
-      headers: {
-        Accept: 'application/json',
-        Authorization: `Bearer ${this.personalAccessToken}`,
-        'Content-Type': 'application/json',
-        ...(init?.headers ?? {}),
-      },
-    });
+    let response: Response;
+
+    try {
+      response = await fetch(url, {
+        ...init,
+        headers: {
+          Accept: 'application/json',
+          Authorization: `Bearer ${this.getPersonalAccessToken()}`,
+          'Content-Type': 'application/json',
+          ...(init?.headers ?? {}),
+        },
+      });
+    } catch {
+      throw new BadGatewayException(
+        `Unable to reach Jira at ${this.getBaseUrl()}. Start Jira locally or verify JIRA_BASE_URL in the root .env file.`,
+      );
+    }
 
     if (!response.ok) {
-      const body = await response.text();
-      throw new BadGatewayException(`Jira request failed (${response.status}) for ${url}: ${body || response.statusText}`);
+      throw this.toJiraRequestException(response.status);
     }
 
     if (response.status === 204) {

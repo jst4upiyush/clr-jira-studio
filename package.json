@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "packageManager": "pnpm@10.0.0",
   "scripts": {
+    "dev": "node ./scripts/dev-all.mjs",
     "dev:web": "pnpm --filter web dev",
     "dev:api": "pnpm --filter api dev",
     "dev:worker": "pnpm --filter worker dev",

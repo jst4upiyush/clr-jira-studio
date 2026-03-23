@@ -1,41 +1,6 @@
 # Clr Jira Studio
 
-Internal web application scaffold for discovering Jira projects via company SSO + Jira role sync, generating **Epics / Features / Stories** from text and files, reviewing them in **draft phase**, and creating accepted items in Jira with an **immutable submitted history**.
-
-## Confirmed requirements baked into this scaffold
-
-- **Internal tool**
-- **Company SSO** for authentication
-- **Jira role-based authorization** for creation permissions
-- **Single parent chain**: `Epic -> Feature -> Story`
-- **Feature is a native Jira issue type**
-- Support creation modes:
-  - Epic only
-  - Feature only
-  - Story only
-  - Epic + suggested Features
-  - Epic + suggested Features + suggested Stories
-  - Feature + suggested Stories
-- **Draft phase** and **Submitted phase** are explicit and separate
-- Users can **partially accept** a generated hierarchy; only accepted items are created in Jira
-- Dashboard history shows **what this app generated/submitted**, not necessarily current Jira state
-- Accepted/submitted items are **immutable in this dashboard**
-- File inputs supported on day 1:
-  - PDF
-  - TXT
-  - Markdown
-  - DOCX
-  - Images
-- Team templates support:
-  - prompt packs
-  - required Jira fields
-  - labels/components
-  - naming conventions
-  - issue-link rules
-- Template visibility:
-  - team-private
-  - public reusable
-- Copilot instructions / agents / skills / hooks / scripts execute **on the server built here**
+Internal web application scaffold for discovering Jira projects via company SSO + Jira role sync, generating **Epics / Features / Stories** from text and files, reviewing them in a **draft phase**, and creating accepted items in Jira with an **immutable submitted history**.
 
 ## Stack
 
@@ -43,6 +8,7 @@ Internal web application scaffold for discovering Jira projects via company SSO 
 - **API**: NestJS + TypeScript
 - **Worker**: Node worker scaffold for ingestion and generation jobs
 - **Shared contracts**: domain types in `packages/shared`
+- **Local services**: Jira Software + Postgres via Docker Compose
 
 ## Monorepo layout
 
@@ -50,66 +16,88 @@ Internal web application scaffold for discovering Jira projects via company SSO 
 apps/
   web/        Next.js UI
   api/        NestJS backend
-  worker/     ingestion + generation worker skeleton
+  worker/     ingestion + generation worker scaffold
 packages/
   shared/     shared contracts, enums, DTOs
+scripts/
+  dev-all.mjs single-command local launcher
 ```
 
-## What is scaffolded
+## Local prerequisites
 
-- app structure
-- starter UI pages
-- shared domain contracts
-- backend module boundaries
-- draft vs submitted model
-- partial acceptance model
-- template schema shape
-- file ingestion shape
-- server-side generation provider abstraction
-- architecture notes and implementation plan
+Install these before starting the app locally:
 
-## What is deliberately not implemented yet
+- Node.js 20+
+- pnpm 10+
+- Docker Desktop (or another Docker engine with `docker compose` available)
 
-- real SSO integration
-- real Jira API integration
-- real database persistence
-- object storage
-- job queue
-- OCR / document parsing
-- actual Copilot executor bridge
-
-That omission is intentional. A scaffold should encode structure and constraints first. Prematurely hardwiring vendors before the domain model settles is how these apps rot.
-
-## Suggested implementation order
-
-1. Company SSO login
-2. Jira connection + project/role discovery sync
-3. Postgres schema + persistence
-4. Template CRUD + versioning + public publishing rules
-5. File upload + storage + ingestion queue
-6. Draft generation provider runner
-7. Review tree + partial acceptance flow
-8. Jira creation transaction + immutable submitted snapshot
-9. Audit trail + observability
-
-## Local development
+## Install dependencies
 
 ```bash
 pnpm install
-pnpm dev:web
-pnpm dev:api
-pnpm dev:worker
 ```
 
-## Environment variables
+## Configure the root environment file
 
-Each app contains an `.env.example` file scaffold. These are placeholders for Copilot to wire up.
+The repository uses a **root** `.env` file for both Docker services and the app processes.
+
+1. Copy `.env.example` to `.env` if you do not already have one.
+2. Set these required values:
+
+- `JIRA_BASE_URL` — usually `http://localhost:8080`
+- `JIRA_PAT` — Jira personal access token for the local Jira instance
+- `JIRA_DEFAULT_USER` — Jira username that should be used as the local app session
+- `NEXT_PUBLIC_API_BASE_URL` — usually `http://localhost:4000/api`
+- `POSTGRES_PASSWORD`
+- `ATL_JDBC_PASSWORD` — should match `POSTGRES_PASSWORD`
+
+If Jira credentials are missing, the API now starts in **setup mode** instead of failing silently. The web app stays usable and shows setup guidance on Jira-backed pages.
+
+## Start everything with one command
+
+From the repository root, run:
+
+```bash
+pnpm dev
+```
+
+That command:
+
+1. starts Docker services for **Postgres** and **Jira**
+2. starts the **API** watcher on port `4000`
+3. starts the **Next.js web app** on port `3000`
+4. starts the **worker** watcher
+
+Press `Ctrl+C` to stop the app processes. Docker containers keep running until you stop them separately.
+
+> Jira itself can take a few minutes to finish booting after the container first reports `Up`. During that warm-up window, the frontend routes still load, but Jira-backed pages can temporarily show setup guidance until Jira stops returning upstream `503` responses.
+
+## Verify the app locally
+
+After `pnpm dev` is running:
+
+1. Open `http://localhost:3000/dashboard`
+2. Open `http://localhost:3000/settings`
+3. Check `http://localhost:4000/api/jira/status`
+
+Expected behavior:
+
+- if Jira env vars are configured and Jira is reachable, the API reports `configured: true`
+- if Jira env vars are missing, the API reports `configured: false` and a helpful message
+- after `pnpm dev` first starts Jira, expect a warm-up period before Jira-backed routes such as `/api/jira/projects` succeed; refresh the app once Jira has finished starting
+- the dashboard, settings, create, and history pages render cleanly instead of surfacing avoidable runtime 500s during local setup
+- draft creation and Jira submission remain intentionally blocked until Jira is actually configured
+
+## Notes on current local Jira behavior
+
+This repository already contains Jira-backed search and creation flows. Local validation of the remaining feature-dependent creation flows is still blocked by **external Jira project configuration** when the connected Jira instance does not expose a native `Feature` issue type in the visible projects.
 
 ## Primary design rule
 
 This application is **not** a second Jira editor.
 
 It is a:
+
 - discovery layer
 - template layer
 - generation layer

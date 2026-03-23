@@ -29,10 +29,17 @@ export const templates: TemplateSummary[] = [
     teamId: 'team-1',
     name: 'Platform Delivery Pack',
     description: 'Internal template for Epic -> Feature -> Story creation with standard naming and link rules.',
+    systemContext: 'Generate Jira-ready backlog items for platform delivery work with practical implementation detail.',
+    persona: 'Senior delivery manager translating initiative context into Jira hierarchy.',
     visibility: 'PUBLIC',
     status: 'PUBLISHED',
     supportedLevels: ['EPIC', 'FEATURE', 'STORY'],
     supportedScopes: ['EPIC_ONLY', 'FEATURE_ONLY', 'STORY_ONLY', 'EPIC_WITH_FEATURES', 'EPIC_WITH_FEATURES_AND_STORIES', 'FEATURE_WITH_STORIES'],
+    owner: {
+      userId: 'jira:template-owner',
+      jiraUsername: 'template-owner',
+      displayName: 'Template Owner',
+    },
     version: 4,
     promptPacks: [
       {
@@ -57,6 +64,8 @@ export const templates: TemplateSummary[] = [
       storyPattern: '[STORY] {{title}}',
     },
     issueLinkRules: [{ type: 'relates to', sourceLevel: 'FEATURE', targetLevel: 'STORY', direction: 'OUTWARD' }],
+    createdAt: '2026-03-20T08:00:00Z',
+    updatedAt: '2026-03-20T08:00:00Z',
   },
 ];
 
@@ -74,6 +83,18 @@ export const history: DraftWorkItemSet[] = [
     templateVersion: 4,
     sourceFiles: [{ id: 'f1', filename: 'context.md', mimeType: 'text/markdown', sizeBytes: 2048 }],
     createdAt: '2026-03-20T09:00:00Z',
+    updatedAt: '2026-03-20T09:00:00Z',
+    generationContext: {
+      mode: 'HEURISTIC',
+      requestSnapshot: {
+        projectId: 'p1',
+        templateId: 't1',
+        scope: 'EPIC_WITH_FEATURES_AND_STORIES',
+        textInput: 'Enable self-service backlog creation for platform work.',
+      },
+      templateSnapshot: templates[0],
+      refinementHistory: [],
+    },
     items: [
       {
         id: 'wi-1',

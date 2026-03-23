@@ -229,3 +229,119 @@ Evidence:
 Next action:
 
 - Resume Step 6 after Jira admins add `Feature` support to at least one visible project and a valid Feature parent can be created or reused.
+
+## [2026-03-23T01:48:30Z] Support Update - Local Runtime Hardening
+
+Status: completed
+
+Delegated subagents:
+
+- Execution Subagent
+
+Summary:
+
+- Hardened local startup so the API reports Jira setup mode clearly instead of booting into a silently broken state.
+- Added a root `pnpm dev` launcher that starts Docker services plus the API, web app, and worker for local development.
+- Updated the web app to render setup guidance more cleanly on Jira-dependent first-load routes when local Jira configuration is incomplete.
+- Replaced the fragile API watch command with a package-local dev launcher and fixed Windows process cleanup so retries do not leave orphaned dev servers behind.
+
+Artifacts changed:
+
+- .copilot/state/jira-webapp-workflow-log.md
+- README.md
+- package.json
+- scripts/dev-all.mjs
+- apps/api/package.json
+- apps/api/scripts/dev-api.mjs
+- apps/api/src/main.ts
+- apps/api/src/modules/auth/auth.controller.ts
+- apps/api/src/modules/jira/jira.controller.ts
+- apps/api/src/modules/jira/jira.service.ts
+- apps/api/src/modules/users/users.service.ts
+- apps/api/src/modules/work-items/work-items.service.ts
+- apps/web/app/create/page.tsx
+- apps/web/app/dashboard/page.tsx
+- apps/web/app/history/page.tsx
+- apps/web/app/settings/page.tsx
+- apps/web/components/setup-error-card.tsx
+- apps/web/lib/api.ts
+- packages/shared/src/index.ts
+
+Evidence:
+
+- `pnpm typecheck` passed across `packages/shared`, `apps/api`, `apps/web`, and `apps/worker`.
+- `pnpm build` passed across `packages/shared`, `apps/api`, `apps/web`, and `apps/worker`.
+- `pnpm dev` successfully started Docker Compose for Postgres and Jira, the Next.js web app on `http://localhost:3000`, the API on `http://localhost:4000`, and the worker watcher.
+- HTTP smoke checks succeeded: `GET http://localhost:4000/api/jira/status` returned `200` with `configured: true`, and `GET http://localhost:3000/dashboard` returned `200`.
+- Windows cleanup was verified by terminating the launcher and confirming the app ports were released without leaving orphaned web/API/worker processes behind.
+
+Next action:
+
+- Resume Step 6 only after Jira admins add native `Feature` support to at least one visible Jira project; local runtime hardening does not remove that external blocker.
+
+## [2026-03-23T01:57:30Z] Audit - Local Runtime Validation Follow-up
+
+Status: completed
+
+Delegated subagents:
+
+- Execution Subagent
+- Browser Validation Subagent
+
+Summary:
+
+- Re-audited the local single-command startup path without assuming prior claims were correct.
+- Confirmed the repo contains the launcher, setup-mode handling, Jira status endpoint, and README guidance.
+- Verified the app first renders setup guidance cleanly while Jira is still warming up, then transitions to real Jira-backed state once Jira finishes startup.
+- Updated setup guidance to mention the observed Jira warm-up delay so the temporary `503` state is less misleading during local runs.
+
+Artifacts changed:
+
+- .copilot/state/jira-webapp-workflow-log.md
+- README.md
+- apps/web/components/setup-error-card.tsx
+
+Evidence:
+
+- `pnpm dev` opened listeners on `http://localhost:3000` and `http://localhost:4000`, and Docker reported `jira` plus `jira-postgres` containers running.
+- `GET /api/jira/status` returned `200` immediately, while `GET /api/jira/projects` returned `502` wrapping upstream Jira `503` responses until Jira plugin startup completed.
+- Browser validation showed `Dashboard`, `Settings`, and `Create` rendered setup guidance instead of a generic 500 during warm-up.
+- After additional warm-up time, `GET /api/jira/projects`, `GET /api/jira/users/sync`, and `GET /api/auth/session` all returned `200`, and browser validation showed live Jira-backed data and successful Jira search results.
+
+Next action:
+
+- Keep the warm-up guidance in place for local runs and resume workflow Step 6 separately when Jira Feature support is available.
+
+## [2026-03-23T17:37:58.6987910Z] Support Update - Frontend UX Expansion
+
+Status: completed
+
+Delegated subagents:
+
+- Frontend/UI Subagent
+
+Summary:
+
+- Replaced the Create page scope dropdown with scan-friendly scope cards that still send exact backend `DraftScope` values.
+- Added live Jira parent pickers, attachment extraction, inline draft editing, draft refinement, and markdown export to the Create page while preserving Jira submission flow.
+- Reworked the Templates page into a live CRUD workspace with ownership-aware edit/delete controls and a compact inline editor for template fields.
+
+Artifacts changed:
+
+- .copilot/state/jira-webapp-workflow-log.md
+- apps/web/app/create/page-client.tsx
+- apps/web/app/templates/page.tsx
+- apps/web/app/templates/templates-page-client.tsx
+- apps/web/components/scope-card-selector.tsx
+- apps/web/lib/api.ts
+- apps/web/lib/draft-scopes.ts
+
+Evidence:
+
+- `pnpm --filter web typecheck` passed after the frontend changes.
+- `pnpm --filter web build` passed and generated dynamic routes for `/create` and `/templates`.
+- The new UI now consumes live template CRUD endpoints, `/jira/parents`, draft item patching, draft refinement, and ingestion extraction helpers from the web client.
+
+Next action:
+
+- Final verification should exercise template create/edit/delete ownership rules, attachment extraction messaging, parent selection states for Jira projects with and without Feature support, draft item editing/refinement, markdown download, and final Jira submission.

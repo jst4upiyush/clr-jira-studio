@@ -6,6 +6,11 @@ export class UsersService {
   private readonly users = new Map<string, AppUserSummary>();
   private lastSyncedAt?: string;
 
+  clear() {
+    this.users.clear();
+    this.lastSyncedAt = undefined;
+  }
+
   replaceFromJiraSync(sync: JiraUserSyncResponse): AppUsersResponse {
     const syncedAt = sync.generatedAt || new Date().toISOString();
     const aggregatedUsers = new Map<

@@ -12,6 +12,9 @@ export type DraftStatus = 'DRAFT' | 'READY_FOR_REVIEW' | 'PARTIALLY_ACCEPTED' | 
 export type SubmissionStatus = 'PENDING' | 'SUBMITTED' | 'PARTIAL_FAILURE' | 'FAILED';
 export type ProviderKind = 'INSTRUCTIONS' | 'AGENT' | 'SKILL' | 'HOOK' | 'SCRIPT';
 export type ProjectRole = 'ADMIN' | 'PRODUCT_OWNER' | 'ENGINEER' | 'VIEWER';
+export type ParentIssueLevel = 'EPIC' | 'FEATURE';
+export type FileExtractionStatus = 'PENDING' | 'EXTRACTED' | 'UNSUPPORTED' | 'FAILED';
+export type DraftGenerationMode = 'LLM' | 'HEURISTIC';
 
 export interface ProjectSummary {
   id: string;
@@ -54,15 +57,24 @@ export interface PromptPack {
   variables: string[];
 }
 
+export interface TemplateOwnerSummary {
+  userId: string;
+  jiraUsername?: string;
+  displayName: string;
+}
+
 export interface TemplateSummary {
   id: string;
   teamId: string;
   name: string;
   description?: string;
+  systemContext?: string;
+  persona?: string;
   visibility: TemplateVisibility;
   status: TemplateStatus;
   supportedLevels: WorkItemLevel[];
   supportedScopes: DraftScope[];
+  owner: TemplateOwnerSummary;
   version: number;
   promptPacks: PromptPack[];
   requiredFields: RequiredJiraField[];
@@ -70,6 +82,40 @@ export interface TemplateSummary {
   components: string[];
   namingConvention?: NamingConventionRule;
   issueLinkRules: IssueLinkRule[];
+  isSeeded?: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateTemplateRequest {
+  name: string;
+  description?: string;
+  systemContext?: string;
+  persona?: string;
+  visibility: TemplateVisibility;
+  status: TemplateStatus;
+  supportedLevels: WorkItemLevel[];
+  supportedScopes: DraftScope[];
+  labels?: string[];
+  components?: string[];
+}
+
+export interface UpdateTemplateRequest {
+  name?: string;
+  description?: string;
+  systemContext?: string;
+  persona?: string;
+  visibility?: TemplateVisibility;
+  status?: TemplateStatus;
+  supportedLevels?: WorkItemLevel[];
+  supportedScopes?: DraftScope[];
+  labels?: string[];
+  components?: string[];
+}
+
+export interface DeleteTemplateResponse {
+  deletedTemplateId: string;
+  deleted: true;
 }
 
 export interface CreationDefaults {
@@ -86,11 +132,23 @@ export interface FileDescriptor {
   mimeType: string;
   sizeBytes: number;
   storageKey?: string;
+  extractionStatus?: FileExtractionStatus;
+  extractedText?: string;
+  excerpt?: string;
+  warning?: string;
+}
+
+export interface AttachmentExtractionResponse {
+  totalFiles: number;
+  supportedFiles: number;
+  warnings: string[];
+  files: FileDescriptor[];
 }
 
 export interface DraftQueryContext {
   query?: string;
   matchedIssueKeys?: string[];
+  matchedIssues?: JiraIssueSearchResult[];
   note?: string;
 }
 
@@ -115,6 +173,19 @@ export interface JiraIssueSearchResponse {
   jql: string;
   total: number;
   issues: JiraIssueSearchResult[];
+}
+
+export interface JiraParentIssueOption extends JiraIssueSearchResult {
+  parentLevel: ParentIssueLevel;
+}
+
+export interface JiraParentIssueListResponse {
+  projectKey: string;
+  parentLevel: ParentIssueLevel;
+  query?: string;
+  jql: string;
+  total: number;
+  issues: JiraParentIssueOption[];
 }
 
 export interface JiraRoleUserSummary {
@@ -158,11 +229,20 @@ export interface AppUsersResponse {
   users: AppUserSummary[];
 }
 
+export interface JiraIntegrationStatus {
+  configured: boolean;
+  baseUrl?: string;
+  defaultUser?: string;
+  missingVariables: string[];
+  message: string;
+}
+
 export interface AuthSessionResponse {
-  user: AppUserSummary;
-  authMode: 'jira-sync';
+  user?: AppUserSummary;
+  authMode: 'jira-sync' | 'local-dev';
   syncedUserCount: number;
   lastSyncedAt?: string;
+  message?: string;
 }
 
 export interface CreateDraftRequest {
@@ -178,6 +258,20 @@ export interface CreateDraftRequest {
   providerKind?: ProviderKind;
 }
 
+export interface UpdateDraftItemRequest {
+  title?: string;
+  description?: string;
+  storyPoints?: number | null;
+  targetStartDate?: string | null;
+  targetEndDate?: string | null;
+  labels?: string[];
+  components?: string[];
+}
+
+export interface RefineDraftRequest {
+  instruction: string;
+}
+
 export interface DraftWorkItem {
   id: string;
   parentDraftId?: string;
@@ -191,6 +285,21 @@ export interface DraftWorkItem {
   components?: string[];
   requiredFields?: Record<string, string | number | boolean>;
   children?: DraftWorkItem[];
+}
+
+export interface DraftRefinementRecord {
+  at: string;
+  instruction: string;
+  mode: DraftGenerationMode;
+  fallbackReason?: string;
+}
+
+export interface DraftGenerationContext {
+  mode: DraftGenerationMode;
+  fallbackReason?: string;
+  requestSnapshot: CreateDraftRequest;
+  templateSnapshot?: TemplateSummary;
+  refinementHistory: DraftRefinementRecord[];
 }
 
 export interface DraftWorkItemSet {
@@ -211,6 +320,8 @@ export interface DraftWorkItemSet {
   queryContext?: DraftQueryContext;
   sourceFiles: FileDescriptor[];
   createdAt: string;
+  updatedAt: string;
+  generationContext: DraftGenerationContext;
 }
 
 export interface AcceptDraftSelection {

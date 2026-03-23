@@ -6,3 +6,4 @@ coverage
 pnpm-lock.yaml
 .DS_Store
 *.log
+.github/agents/Brahma.agent.md
